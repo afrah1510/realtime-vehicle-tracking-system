@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Detection Database Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚗 Vehicle Detection Database</h1>
+            <p>Real-time Analytics & Query Dashboard</p>
+        </div>
+
+        <!-- Statistics Cards -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <h3>Total Detections</h3>
+                <div class="value" id="totalDetections">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Unique Vehicles</h3>
+                <div class="value" id="uniqueVehicles">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>States Detected</h3>
+                <div class="value" id="statesDetected">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Avg Quality Score</h3>
+                <div class="value" id="avgQuality">-</div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <h2>Query Options</h2>
+            
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('recent')">Recent Detections</button>
+                <button class="tab" onclick="switchTab('timeframe')">By Timeframe</button>
+                <button class="tab" onclick="switchTab('date')">By Date</button>
+                <button class="tab" onclick="switchTab('search')">Search Plate</button>
+                <button class="tab" onclick="switchTab('quality')">High Quality</button>
+                <button class="tab" onclick="switchTab('export')">Export & Delete</button>
+            </div>
+
+            <!-- Recent Detections -->
+            <div id="recent-content" class="tab-content active">
+                <div class="form-group">
+                    <label>Number of Records:</label>
+                    <input type="number" id="recentLimit" value="10" min="1" max="100">
+                </div>
+                <button class="btn" onclick="loadRecentDetections()">Load Recent Detections</button>
+            </div>
+
+            <!-- By Timeframe -->
+            <div id="timeframe-content" class="tab-content">
+                <div class="form-group">
+                    <label>Last N Hours:</label>
+                    <input type="number" id="timeframeHours" value="1" min="1" max="168">
+                </div>
+                <button class="btn" onclick="loadByTimeframe()">Load Detections</button>
+            </div>
+
+            <!-- By Date -->
+            <div id="date-content" class="tab-content">
+                <div class="form-group">
+                    <label>Select Date:</label>
+                    <input type="date" id="dateInput" value="">
+                </div>
+                <button class="btn" onclick="loadByDate()">Load Detections</button>
+            </div>
+
+            <!-- Search -->
+            <div id="search-content" class="tab-content">
+                <div class="form-group">
+                    <label>Vehicle Number (partial match):</label>
+                    <input type="text" id="searchPlate" placeholder="e.g., MH12">
+                </div>
+                <button class="btn" onclick="searchVehicle()">Search</button>
+            </div>
+
+            <!-- High Quality -->
+            <div id="quality-content" class="tab-content">
+                <div class="form-group">
+                    <label>Quality Threshold:</label>
+                    <input type="number" id="qualityThreshold" value="0.75" min="0" max="1" step="0.05">
+                </div>
+                <button class="btn" onclick="loadHighQuality()">Load High Quality Detections</button>
+            </div>
+
+            <!-- Export & Delete -->
+            <div id="export-content" class="tab-content">
+                <div style="margin-bottom: 20px;">
+                    <h3 style="margin-bottom: 10px;">Export Data</h3>
+                    <button class="btn btn-secondary" onclick="exportCSV()">Export to CSV</button>
+                </div>
+                <div>
+                    <h3 style="margin-bottom: 10px;">Delete Old Records</h3>
+                    <div class="form-group">
+                        <label>Delete records older than (days):</label>
+                        <input type="number" id="deleteDays" value="30" min="1" max="365">
+                    </div>
+                    <button class="btn btn-danger" onclick="deleteOldRecords()">Delete Old Records</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="chart-container">
+            <h2>Detection Statistics</h2>
+            <canvas id="vehicleTypeChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <h2>State Distribution</h2>
+            <canvas id="stateChart"></canvas>
+        </div>
+
+        <!-- Data Table -->
+        <div class="data-table">
+            <h2 id="tableTitle">Recent Detections</h2>
+            <div id="tableContent">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    Loading data...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
