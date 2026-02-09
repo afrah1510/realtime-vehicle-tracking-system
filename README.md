@@ -120,24 +120,6 @@ Edit the `DB_CONFIG` dictionary in each Python file or pass as command-line argu
 python suraksha_main.py --db-host localhost --db-user root --db-password yourpass
 ```
 
-## API Endpoints
-
-### Statistics
-- `GET /api/statistics/total` - Overall statistics
-- `GET /api/statistics/vehicle-type` - Count by vehicle type
-- `GET /api/statistics/state` - Count by state
-- `GET /api/statistics/hourly?date=YYYY-MM-DD` - Hourly breakdown
-
-### Detections
-- `GET /api/recent-detections?limit=10` - Recent detections
-- `GET /api/detections-by-timeframe?hours=1` - Last N hours
-- `GET /api/detections-by-date?date=YYYY-MM-DD` - Specific date
-- `GET /api/search?plate=MH12AB1234` - Search by plate number
-
-### Management
-- `GET /api/export/csv` - Export all data to CSV
-- `GET /api/delete-old?days=30&confirm=true` - Delete old records
-
 ## How It Works
 
 1. **Detection Phase**: YOLO models detect vehicles and license plates in each frame
