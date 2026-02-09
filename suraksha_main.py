@@ -10,7 +10,7 @@ Features:
 - Video output saving
 - MySQL database logging (PERSISTENT CONNECTION)
 - Improved detection for stationary vehicles
-- LICENSE PLATE DISPLAYED ON VIDEO
+- CLEAN DISPLAY: ID, Vehicle Type, License Number only
 """
 
 import cv2
@@ -455,10 +455,9 @@ class FrameCandidate:
 # VEHICLE TRACKER
 # ============================================
 class VehicleTracker:
-    """Enhanced tracker with periodic detection for stationary vehicles"""
+    """Simplified tracker - logs after 3 consecutive frames with same plate"""
     
-    def __init__(self, max_disappeared=30, max_distance=150, min_frames_before_log=3,
-                 quality_threshold=0.60, periodic_check_frames=30):
+    def __init__(self, max_disappeared=30, max_distance=150, min_frames_before_log=3):
         self.next_object_id = 0
         self.objects = {}
         self.disappeared = {}
@@ -468,14 +467,11 @@ class VehicleTracker:
         self.max_distance = max_distance
         self.min_frames_before_log = min_frames_before_log
         
-        self.quality_threshold = quality_threshold
-        self.periodic_check_frames = periodic_check_frames
-        
-        self.frame_candidates = defaultdict(list)
+        # Track consecutive plate readings
+        self.plate_history = defaultdict(list)  # object_id -> list of recent plates
         self.frame_count = defaultdict(int)
         
-        self.last_logged_frame = {}
-        self.logged_plates = set()
+        self.logged_plates = set()  # Track which plates have been logged
         
     def register(self, centroid, vehicle_type):
         """Register new vehicle"""
@@ -484,79 +480,77 @@ class VehicleTracker:
         self.vehicle_info[self.next_object_id] = {
             'type': vehicle_type,
             'plate': None,
-            'confidence': 0.0
+            'confidence': 0.0,
+            'logged': False
         }
         self.frame_count[self.next_object_id] = 0
-        self.last_logged_frame[self.next_object_id] = -1
+        self.plate_history[self.next_object_id] = []
         self.next_object_id += 1
         
     def deregister(self, object_id):
-        """Remove tracked vehicle and return best frame if available"""
-        best_candidate = None
-        
-        if object_id in self.frame_candidates and len(self.frame_candidates[object_id]) > 0:
-            if self.frame_count[object_id] >= self.min_frames_before_log:
-                if self.last_logged_frame[object_id] == -1:
-                    candidates = self.frame_candidates[object_id]
-                    best_candidate = max(candidates, key=lambda x: x.quality_score)
-        
+        """Remove tracked vehicle"""
         del self.objects[object_id]
         del self.disappeared[object_id]
         del self.vehicle_info[object_id]
-        if object_id in self.frame_candidates:
-            del self.frame_candidates[object_id]
+        if object_id in self.plate_history:
+            del self.plate_history[object_id]
         if object_id in self.frame_count:
             del self.frame_count[object_id]
-        if object_id in self.last_logged_frame:
-            del self.last_logged_frame[object_id]
-        
-        return best_candidate
     
-    def check_for_detection(self, object_id):
-        """Check if vehicle should be detected now (periodic or quality-based)"""
-        if self.frame_count[object_id] < self.min_frames_before_log:
+    def add_plate_reading(self, object_id, plate_number, vehicle_type, plate_conf, 
+                          vehicle_conf, state_code=None, state_name=None):
+        """Add a plate reading and check if we should log it"""
+        if object_id not in self.objects:
             return None
         
-        if object_id not in self.frame_candidates or len(self.frame_candidates[object_id]) == 0:
+        # ALWAYS update the plate display immediately (even before logging)
+        self.vehicle_info[object_id]['plate'] = plate_number
+        
+        # Check if this vehicle has already been logged
+        if self.vehicle_info[object_id].get('logged', False):
+            # Already logged, don't log again but plate is already displayed above
             return None
         
-        if self.last_logged_frame[object_id] != -1:
-            return None
+        # Add to history for logging decision
+        self.plate_history[object_id].append(plate_number)
         
-        candidates = self.frame_candidates[object_id]
-        best_candidate = max(candidates, key=lambda x: x.quality_score)
+        # Keep only recent history (last 5 frames)
+        if len(self.plate_history[object_id]) > 5:
+            self.plate_history[object_id].pop(0)
         
-        if best_candidate.plate_number in self.logged_plates:
-            return None
-        
-        current_frame = self.frame_count[object_id]
-        
-        if best_candidate.quality_score >= self.quality_threshold:
-            return best_candidate
-        
-        if current_frame % self.periodic_check_frames == 0:
-            if best_candidate.quality_score >= 0.5:
-                return best_candidate
+        # Check if we have 3 consecutive same readings
+        if len(self.plate_history[object_id]) >= self.min_frames_before_log:
+            recent_plates = self.plate_history[object_id][-self.min_frames_before_log:]
+            
+            # Check if all recent plates are the same
+            if len(set(recent_plates)) == 1:  # All same
+                # Check if not already logged globally
+                if plate_number not in self.logged_plates:
+                    self.logged_plates.add(plate_number)
+                    self.vehicle_info[object_id]['logged'] = True
+                    
+                    # Return detection info for database logging
+                    return {
+                        'plate_number': plate_number,
+                        'vehicle_type': vehicle_type,
+                        'plate_conf': plate_conf,
+                        'vehicle_conf': vehicle_conf,
+                        'state_code': state_code,
+                        'state_name': state_name
+                    }
         
         return None
         
     def update(self, detections):
         """Update tracker with new detections"""
         if len(detections) == 0:
-            deregistered_candidates = []
-            periodic_candidates = []
-            
+            # Handle disappeared objects
             for object_id in list(self.disappeared.keys()):
                 self.disappeared[object_id] += 1
                 if self.disappeared[object_id] > self.max_disappeared:
-                    candidate = self.deregister(object_id)
-                    if candidate:
-                        deregistered_candidates.append((object_id, candidate))
+                    self.deregister(object_id)
             
-            return self.get_tracked_objects(), deregistered_candidates, periodic_candidates
-        
-        deregistered_candidates = []
-        periodic_candidates = []
+            return self.get_tracked_objects()
         
         if len(self.objects) == 0:
             for centroid, vehicle_type, _, conf in detections:
@@ -594,12 +588,6 @@ class VehicleTracker:
                 
                 self.frame_count[object_id] += 1
                 
-                candidate = self.check_for_detection(object_id)
-                if candidate:
-                    periodic_candidates.append((object_id, candidate))
-                    self.last_logged_frame[object_id] = self.frame_count[object_id]
-                    self.logged_plates.add(candidate.plate_number)
-                
                 used_rows.add(row)
                 used_cols.add(col)
             
@@ -608,22 +596,20 @@ class VehicleTracker:
                 object_id = object_ids[row]
                 self.disappeared[object_id] += 1
                 if self.disappeared[object_id] > self.max_disappeared:
-                    candidate = self.deregister(object_id)
-                    if candidate:
-                        deregistered_candidates.append((object_id, candidate))
+                    self.deregister(object_id)
             
             unused_cols = set(range(D.shape[1])) - used_cols
             for col in unused_cols:
                 self.register(detection_centroids[col], detections[col][1])
         
-        return self.get_tracked_objects(), deregistered_candidates, periodic_candidates
+        return self.get_tracked_objects()
     
     def get_tracked_objects(self):
         """Get all tracked objects"""
         result = {}
         
         for object_id, centroid in self.objects.items():
-            logged_status = "✓" if self.last_logged_frame[object_id] != -1 else ""
+            logged_status = "✓" if self.vehicle_info[object_id].get('logged', False) else ""
             
             result[object_id] = {
                 'centroid': centroid,
@@ -635,22 +621,7 @@ class VehicleTracker:
             }
         
         return result
-    
-    def add_frame_candidate(self, object_id, plate_number, vehicle_type,
-                           plate_conf, vehicle_conf, plate_roi, ocr_clarity,
-                           state_code=None, state_name=None):
-        """Add a frame candidate for this vehicle"""
-        if object_id not in self.objects:
-            return
-        
-        candidate = FrameCandidate(
-            plate_number, vehicle_type,
-            plate_conf, vehicle_conf, plate_roi, ocr_clarity,
-            state_code, state_name
-        )
-        
-        self.frame_candidates[object_id].append(candidate)
-        self.vehicle_info[object_id]['plate'] = plate_number
+
 
 
 # ============================================
@@ -961,11 +932,11 @@ class VehicleRecognitionSystem:
     """Main system integrating all components"""
     
     def __init__(self, plate_model_path, vehicle_model_path, 
-                 min_frames=3, quality_threshold=0.60, periodic_check=30,
+                 min_frames=3,
                  db_host='localhost', db_name='vehicle_recognition', 
                  db_user='root', db_password='12345'):
         print("="*60)
-        print("Initializing Vehicle Recognition System - ENHANCED")
+        print("Initializing Vehicle Recognition System - SIMPLIFIED")
         print("="*60)
         
         print(f"\nLoading plate detection model: {plate_model_path}")
@@ -983,9 +954,7 @@ class VehicleRecognitionSystem:
         self.tracker = VehicleTracker(
             max_disappeared=30,
             max_distance=150,
-            min_frames_before_log=min_frames,
-            quality_threshold=quality_threshold,
-            periodic_check_frames=periodic_check
+            min_frames_before_log=min_frames
         )
         
         self.validator = IndianPlateValidator()
@@ -1003,15 +972,9 @@ class VehicleRecognitionSystem:
         print("="*60)
         print("OCR Engine: TESSERACT (ENHANCED 2-LINE SUPPORT)")
         print("Database: PERSISTENT CONNECTION (never closes)")
-        print("Enhanced Detection Settings:")
-        print(f"  - Minimum frames before detection: {min_frames}")
-        print(f"  - Quality threshold (early detect): {quality_threshold}")
-        print(f"  - Periodic check interval: {periodic_check} frames")
-        print("  - Quality factors: Plate conf, Vehicle conf, OCR clarity, ROI size")
-        print("\nDetection Modes:")
-        print("  1. HIGH QUALITY: Immediate detection when quality >= threshold")
-        print(f"  2. PERIODIC: Detection every {periodic_check} frames for stationary vehicles")
-        print("  3. EXIT: Detection when vehicle leaves frame")
+        print("Detection Settings:")
+        print(f"  - Logs after {min_frames} consecutive same plate readings")
+        print("  - Immediate display of detected plates")
         print("\nPreprocessing Pipeline (2-LINE OPTIMIZED):")
         print("  - Deskewing, CLAHE, Bilateral Filter")
         print("  - Otsu + Adaptive Thresholding")
@@ -1121,43 +1084,10 @@ class VehicleRecognitionSystem:
             detections.append((centroid, vehicle_type, (x1, y1, x2, y2), conf))
             vehicle_boxes[centroid] = (x1, y1, x2, y2, conf)
         
-        tracked_objects, deregistered_candidates, periodic_candidates = self.tracker.update(detections)
+        # Update tracker (simplified - no candidates returned)
+        tracked_objects = self.tracker.update(detections)
         
-        for obj_id, candidate in deregistered_candidates:
-            if candidate.plate_number not in self.detected_plates:
-                self.detected_plates.add(candidate.plate_number)
-                print(f"✓ EXIT DETECT (Q:{candidate.quality_score:.2f}): {candidate.plate_number} | {candidate.vehicle_type}")
-                
-                if self.db:
-                    self.db.log_detection(
-                        candidate.plate_number,
-                        candidate.vehicle_type,
-                        candidate.plate_conf,
-                        candidate.vehicle_conf,
-                        candidate.quality_score,
-                        candidate.state_code,
-                        candidate.state_name,
-                        "EXIT"
-                    )
-        
-        for obj_id, candidate in periodic_candidates:
-            if candidate.plate_number not in self.detected_plates:
-                self.detected_plates.add(candidate.plate_number)
-                detection_type = "HIGH-Q" if candidate.quality_score >= self.tracker.quality_threshold else "PERIODIC"
-                print(f"✓ {detection_type} DETECT (Q:{candidate.quality_score:.2f}): {candidate.plate_number} | {candidate.vehicle_type}")
-                
-                if self.db:
-                    self.db.log_detection(
-                        candidate.plate_number,
-                        candidate.vehicle_type,
-                        candidate.plate_conf,
-                        candidate.vehicle_conf,
-                        candidate.quality_score,
-                        candidate.state_code,
-                        candidate.state_name,
-                        detection_type
-                    )
-        
+        # Detect license plates
         plate_results = self.plate_detector(frame, conf=0.25, verbose=False)[0]
         plate_boxes = []
         
@@ -1170,7 +1100,7 @@ class VehicleRecognitionSystem:
             if plate_roi.size == 0:
                 continue
             
-            validated_plate = None  # FIXED: Initialize before validation
+            validated_plate = None
             state_code = None
             state_name = None
             
@@ -1187,8 +1117,7 @@ class VehicleRecognitionSystem:
                 
                 print(f"  → Validated: {validated_plate}")
                 
-                ocr_clarity = self.validator.calculate_ocr_clarity(raw_text, validation["corrected"])
-                
+                # Find closest vehicle
                 plate_center = (int((px1 + px2) / 2), int((py1 + py2) / 2))
                 
                 min_dist = float('inf')
@@ -1203,62 +1132,53 @@ class VehicleRecognitionSystem:
                 if closest_id is not None and min_dist < 200:
                     obj_data = tracked_objects[closest_id]
                     
-                    self.tracker.add_frame_candidate(
+                    # Add plate reading and check if should log
+                    detection_info = self.tracker.add_plate_reading(
                         closest_id,
                         validated_plate,
                         obj_data['type'],
                         plate_conf,
                         obj_data['confidence'],
-                        plate_roi,
-                        ocr_clarity,
                         state_code,
                         state_name
                     )
+                    
+                    # If detection returned, log to database
+                    if detection_info and self.db:
+                        print(f"✓ LOGGED: {detection_info['plate_number']} | {detection_info['vehicle_type']}")
+                        self.db.log_detection(
+                            detection_info['plate_number'],
+                            detection_info['vehicle_type'],
+                            detection_info['plate_conf'],
+                            detection_info['vehicle_conf'],
+                            1.0,  # quality score (simplified)
+                            detection_info['state_code'],
+                            detection_info['state_name'],
+                            "CONSECUTIVE"
+                        )
             
             plate_boxes.append({
                 'bbox': (px1, py1, px2, py2),
                 'conf': plate_conf,
-                'text': validated_plate  # Will be None if validation failed
+                'text': validated_plate
             })
         
         return tracked_objects, plate_boxes
     
     def draw_annotations(self, frame, tracked_objects, plate_boxes):
-        """Draw tracking info and PROMINENTLY DISPLAY license plate numbers"""
+        """Draw CLEAN tracking info with ID, vehicle type, and license plate"""
         h, w = frame.shape[:2]
         
+        # Draw license plate bounding boxes (green for valid plates)
         for plate_info in plate_boxes:
             px1, py1, px2, py2 = plate_info['bbox']
-            conf = plate_info['conf']
             text = plate_info['text']
             
+            # Draw green bounding box for detected plates
             color = (0, 255, 0) if text else (0, 255, 255)
             cv2.rectangle(frame, (px1, py1), (px2, py2), color, 2)
-            
-            if text:
-                plate_label = f"{text}"
-                
-                (label_width, label_height), baseline = cv2.getTextSize(
-                    plate_label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2
-                )
-                
-                label_y = py1 - 10
-                if label_y < label_height + 10:
-                    label_y = py2 + label_height + 10
-                
-                cv2.rectangle(frame,
-                             (px1, label_y - label_height - 5),
-                             (px1 + label_width + 10, label_y + 5),
-                             (0, 255, 255), -1)
-                
-                cv2.putText(frame, plate_label,
-                           (px1 + 5, label_y),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
-            
-            conf_label = f"{conf:.2f}"
-            cv2.putText(frame, conf_label, (px1, py2 + 15),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
         
+        # Draw vehicle tracking information with white background
         for obj_id, data in tracked_objects.items():
             cx, cy = data['centroid']
             vehicle_type = data['type']
@@ -1266,26 +1186,33 @@ class VehicleRecognitionSystem:
             frames_tracked = data['frames_tracked']
             logged = data['logged']
             
+            # Color: green if logged, orange if tracking
             color = (0, 255, 0) if logged else (255, 128, 0)
             
+            # Draw centroid circle
             cv2.circle(frame, (cx, cy), 5, color, -1)
             
+            # Create label with ID, vehicle type, and license plate
             label = f"ID:{obj_id} {logged} | {vehicle_type} | F:{frames_tracked}"
             if plate:
                 label += f" | {plate}"
             
+            # Calculate text size
             (text_width, text_height), baseline = cv2.getTextSize(
                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2
             )
             
+            # Draw white background rectangle
             cv2.rectangle(frame, 
                          (cx - 100, cy - 35), 
                          (cx - 100 + text_width + 10, cy - 35 + text_height + 10),
                          (255, 255, 255), -1)
             
+            # Draw black text on white background
             cv2.putText(frame, label, (cx - 95, cy - 20),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
         
+        # Draw statistics in top-left corner
         stats_label = f"Tracked: {len(tracked_objects)} | Detected: {len(self.detected_plates)}"
         (stats_width, stats_height), baseline = cv2.getTextSize(
             stats_label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2
@@ -1336,8 +1263,8 @@ class VehicleRecognitionSystem:
         print("Press 'q' to quit")
         print("Database connection: PERSISTENT (will not close)")
         
-        cv2.namedWindow('Vehicle Recognition - ENHANCED', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Vehicle Recognition - ENHANCED', display_width, int(display_width * 9/16))
+        cv2.namedWindow('Vehicle Recognition - CLEAN DISPLAY', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Vehicle Recognition - CLEAN DISPLAY', display_width, int(display_width * 9/16))
         
         fps_queue = deque(maxlen=30)
         
@@ -1375,7 +1302,7 @@ class VehicleRecognitionSystem:
                 if out is not None:
                     out.write(annotated_frame)
                 
-                cv2.imshow('Vehicle Recognition - ENHANCED', annotated_frame)
+                cv2.imshow('Vehicle Recognition - CLEAN DISPLAY', annotated_frame)
                 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
@@ -1394,16 +1321,12 @@ class VehicleRecognitionSystem:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Real-Time Vehicle Recognition System - ENHANCED')
+    parser = argparse.ArgumentParser(description='Real-Time Vehicle Recognition System - SIMPLIFIED')
     parser.add_argument('--plate-model', type=str, default='models/license_plate.pt', help='Path to plate detection model (.pt)')
     parser.add_argument('--vehicle-model', type=str, default='models/vehicle_model.pt', help='Path to vehicle classification model (.pt)')
     parser.add_argument('--camera', type=int, default=1, help='Camera ID (default: 1)')
     parser.add_argument('--video', type=str, help='Path to video file (overrides --camera)')
-    parser.add_argument('--min-frames', type=int, default=3, help='Minimum frames before detection (default: 3)')
-    parser.add_argument('--quality-threshold', type=float, default=0.60, 
-                       help='Quality threshold for early detection (default: 0.60)')
-    parser.add_argument('--periodic-check', type=int, default=30,
-                       help='Periodic check interval in frames (default: 30)')
+    parser.add_argument('--min-frames', type=int, default=3, help='Consecutive frames needed for logging (default: 3)')
     parser.add_argument('--display-width', type=int, default=1280, help='Display window width (default: 1280)')
     parser.add_argument('--no-save', action='store_true', help='Do not save output video')
     
@@ -1419,8 +1342,6 @@ def main():
         args.plate_model,
         args.vehicle_model,
         min_frames=args.min_frames,
-        quality_threshold=args.quality_threshold,
-        periodic_check=args.periodic_check,
         db_host=args.db_host,
         db_name=args.db_name,
         db_user=args.db_user,
