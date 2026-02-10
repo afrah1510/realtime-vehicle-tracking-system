@@ -176,13 +176,10 @@ python suraksha_main.py --db-host localhost --db-user root --db-password yourpas
 - **Logging Strategy**: Reduces duplicate entries by requiring 3 consecutive detections
 - **OCR Preprocessing**: Multiple preprocessing pipelines for accuracy
 
-## License
-
-This project is for educational and demonstration purposes.
-
 ## Credits
 
 - YOLO models: Ultralytics
 - OCR: Tesseract
 - Web Framework: Flask
 - Database: MySQL
+
