@@ -52,9 +52,9 @@ mysql -u root -p
 Enter your MySQL password, then the database will be created automatically on first run.
 
 4. **Update database credentials** (if different from defaults):
-   - Edit `suraksha_main.py` line 83-86
-   - Edit `app.py` line 18-21
-   - Edit `query_database.py` line 16-19
+   - Edit `suraksha_main.py` line 133, 937, 1337
+   - Edit `app.py` line 23
+   - Edit `query_database.py` line 19, 397
 
 ## Project Structure
 
@@ -81,7 +81,7 @@ python suraksha_main.py --camera 0
 ```
 
 **Common options:**
-- `--camera 1` - Use camera ID 1
+- `--camera 1` - Use camera ID 1 for external webcam
 - `--video path/to/video.mp4` - Process video file
 - `--min-frames 3` - Frames needed for logging (default: 3)
 - `--no-save` - Don't save output video
@@ -182,4 +182,5 @@ python suraksha_main.py --db-host localhost --db-user root --db-password yourpas
 - OCR: Tesseract
 - Web Framework: Flask
 - Database: MySQL
+
 
